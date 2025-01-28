@@ -9,7 +9,7 @@ contract RoomieScript is Script {
     //
     function run() external returns (Roomie) {
         vm.startBroadcast();
-        Roomie roomie = new Roomie();
+        Roomie roomie = new Roomie("");
         vm.stopBroadcast();
 
         return roomie;
