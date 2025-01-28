@@ -14,5 +14,7 @@ contract RoomieTest is Test {
         RoomieScript roomieScript = new RoomieScript();
         roomie = roomieScript.run();
     }
+
+    function testSuccessfullyMintToken() public {}
     //
 }
