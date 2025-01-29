@@ -52,10 +52,7 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
     }
 
     modifier checkTokenOwnership(bytes32 _lodgeId, uint256 _tokenId) {
-        if (
-            keccak256(abi.encodePacked(s_lodgeToken[_tokenId])) !=
-            keccak256(abi.encodePacked(_lodgeId))
-        ) {
+        if (keccak256(abi.encodePacked(s_lodgeToken[_tokenId])) != keccak256(abi.encodePacked(_lodgeId))) {
             revert InvalidTokenOwnership();
         }
         _;
@@ -71,15 +68,9 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
     }
 
     // CURRENT FORMULA : tokenPricePerNight * mintSupply * ( COMMITMENT_FEE / 1000 )
-    modifier validateStaking(
-        uint256 _tokenId,
-        uint256 _mintAmount,
-        uint256 _value
-    ) {
+    modifier validateStaking(uint256 _tokenId, uint256 _mintAmount, uint256 _value) {
         uint256 tokenPricePerNight = s_tokenPricePerNight[_tokenId];
-        uint256 expectedValue = tokenPricePerNight *
-            _mintAmount *
-            (COMMITMENT_FEE / 1000);
+        uint256 expectedValue = tokenPricePerNight * _mintAmount * (COMMITMENT_FEE / 1000);
 
         if (expectedValue != _value) {
             revert InvalidCommitmentFee();
@@ -100,30 +91,17 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         uint256 _checkOutTimestamp
     ) external payable nonReentrant {
         _setApprovalForAll(_lodgeOwner(_lodgeId), _msgSender(), true);
-        _safeTransferFrom(
-            _lodgeOwner(_lodgeId),
-            _msgSender(),
-            _tokenId,
-            _days,
-            ""
-        );
+        _safeTransferFrom(_lodgeOwner(_lodgeId), _msgSender(), _tokenId, _days, "");
         _setApprovalForAll(_lodgeOwner(_lodgeId), _msgSender(), false);
         _placeFunds(_tokenId, _days);
         _addToOrder(_orderId, _checkInTimestamp, _checkOutTimestamp, _days);
     }
 
-    function registerLodge(
-        bytes32 _lodgeId
-    ) external checkLodgeStatus(_lodgeId) {
+    function registerLodge(bytes32 _lodgeId) external checkLodgeStatus(_lodgeId) {
         s_lodgeOwner[_lodgeId] = _msgSender();
     }
 
-    function registerToken(
-        bytes32 _lodgeId,
-        string memory _tokenURI,
-        uint256 _tokenId,
-        uint256 _tokenPrice
-    )
+    function registerToken(bytes32 _lodgeId, string memory _tokenURI, uint256 _tokenId, uint256 _tokenPrice)
         external
         checkAuthorization(_lodgeId, _msgSender())
         checkTokenExistence(_lodgeId, _tokenId)
@@ -134,12 +112,7 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         _setURI(_tokenId, _tokenURI);
     }
 
-    function mint(
-        bytes32 _lodgeId,
-        uint256 _tokenId,
-        uint256 _value,
-        bytes memory _data
-    )
+    function mint(bytes32 _lodgeId, uint256 _tokenId, uint256 _value, bytes memory _data)
         external
         payable
         checkAuthorization(_lodgeId, _msgSender())
@@ -153,11 +126,7 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
 
     function checkIn() external {}
 
-    function checkOut(
-        bytes32 _lodgeId,
-        bytes32 _orderId,
-        uint256 _tokenId
-    )
+    function checkOut(bytes32 _lodgeId, bytes32 _orderId, uint256 _tokenId)
         external
         checkAuthorization(_lodgeId, _msgSender())
         checkTokenOwnership(_lodgeId, _tokenId)
@@ -171,25 +140,17 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         _transferFunds(_lodgeOwner(_lodgeId), transferAmount);
     }
 
-    function uri(
-        uint256 _tokenId
-    ) public view override returns (string memory) {
+    function uri(uint256 _tokenId) public view override returns (string memory) {
         return super.uri(_tokenId);
     }
 
-    function balanceOf(
-        address _account,
-        uint256 _tokenId
-    ) public view override returns (uint256) {
+    function balanceOf(address _account, uint256 _tokenId) public view override returns (uint256) {
         return super.balanceOf(_account, _tokenId);
     }
 
-    function _addToOrder(
-        bytes32 _orderId,
-        uint256 _checkInTimestamp,
-        uint256 _checkOutTimestamp,
-        uint256 _days
-    ) private {
+    function _addToOrder(bytes32 _orderId, uint256 _checkInTimestamp, uint256 _checkOutTimestamp, uint256 _days)
+        private
+    {
         s_customerOrder[_orderId] = _msgSender();
         s_customerCheckInTimestamp[_orderId] = _checkInTimestamp;
         s_customerCheckOutTimestamp[_orderId] = _checkOutTimestamp;
@@ -202,14 +163,12 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
     }
 
     function _transferFunds(address _recipient, uint256 _amount) private {
-        (bool success, ) = payable(_recipient).call{value: _amount}("");
+        (bool success,) = payable(_recipient).call{value: _amount}("");
         require(success, TransferError());
         emit Transfer();
     }
 
-    function _lodgeOwner(
-        bytes32 _lodgeId
-    ) private view returns (address) {
+    function _lodgeOwner(bytes32 _lodgeId) private view returns (address) {
         return s_lodgeOwner[_lodgeId];
     }
 
