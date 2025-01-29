@@ -8,17 +8,16 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 
 contract Roomie is ERC1155URIStorage, ReentrancyGuard {
     //
-    mapping(bytes32 lodgeId => address owner) private s_lodgeOwner;
+    mapping(bytes32 lodgeId => address host) private s_lodgeHost;
 
     mapping(uint256 tokenId => bytes32 lodgeId) private s_lodgeToken;
     mapping(uint256 tokenId => uint256 price) private s_tokenPricePerNight;
 
-    mapping(bytes32 orderId => address user) s_customerOrder;
-    mapping(bytes32 orderId => uint256 checkIn) s_customerCheckInTimestamp;
-    mapping(bytes32 orderId => uint256 checkOut) s_customerCheckOutTimestamp;
-    mapping(bytes32 orderId => uint256 duration) s_customerStayDurationInDays;
-
-    uint256 private constant COMMITMENT_FEE = 5;
+    mapping(bytes32 orderId => address user) private s_customerOrder;
+    mapping(bytes32 orderId => uint256 checkIn) private s_customerCheckInTimestamp;
+    mapping(bytes32 orderId => uint256 checkOut) private s_customerCheckOutTimestamp;
+    mapping(bytes32 orderId => uint256 duration) private s_customerStayDurationInDays;
+    mapping(bytes32 orderId => bool checkIn) private s_customerAlreadyCheckIn;
 
     error LodgeAlreadyRegistered();
     error TokenAlreadyExistence();
@@ -27,18 +26,23 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
     error TransferError();
     error InvalidTime();
     error InvalidCommitmentFee();
+    error MissingCheckIn();
 
     event Transfer();
+    event NewLodgeRegistered();
 
     modifier checkLodgeStatus(bytes32 _lodgeId) {
-        if (_lodgeOwner(_lodgeId) != address(0)) {
+        if (lodgeHost(_lodgeId) != address(0)) {
             revert LodgeAlreadyRegistered();
         }
         _;
     }
 
-    modifier checkAuthorization(bytes32 _lodgeId, address _caller) {
-        if (_lodgeOwner(_lodgeId) != _caller) {
+    modifier checkAuthorization(bytes32 _id, address _host, address _customer) {
+        if (
+            (_customer == address(0) && lodgeHost(_id) != _host)
+                || (_host == address(0) && s_customerOrder[_id] != _customer)
+        ) {
             revert InvalidAuthorization();
         }
         _;
@@ -58,19 +62,20 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         _;
     }
 
-    modifier verifyRoomCheckOut(bytes32 _orderId) {
+    modifier verifyStayPeriod(bytes32 _orderId) {
+        uint256 checkInTimestamp = s_customerCheckInTimestamp[_orderId];
         uint256 checkOutTimestamp = s_customerCheckOutTimestamp[_orderId];
 
-        if (block.timestamp < checkOutTimestamp) {
+        if ((block.timestamp < checkInTimestamp) || (block.timestamp < checkOutTimestamp)) {
             revert InvalidTime();
         }
         _;
     }
 
-    // CURRENT FORMULA : tokenPricePerNight * mintSupply * ( COMMITMENT_FEE / 1000 )
+    // CURRENT FORMULA : tokenPricePerNight * mintSupply
     modifier validateStaking(uint256 _tokenId, uint256 _mintAmount, uint256 _value) {
         uint256 tokenPricePerNight = s_tokenPricePerNight[_tokenId];
-        uint256 expectedValue = tokenPricePerNight * _mintAmount * (COMMITMENT_FEE / 1000);
+        uint256 expectedValue = tokenPricePerNight * _mintAmount;
 
         if (expectedValue != _value) {
             revert InvalidCommitmentFee();
@@ -90,20 +95,19 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         uint256 _checkInTimestamp,
         uint256 _checkOutTimestamp
     ) external payable nonReentrant {
-        _setApprovalForAll(_lodgeOwner(_lodgeId), _msgSender(), true);
-        _safeTransferFrom(_lodgeOwner(_lodgeId), _msgSender(), _tokenId, _days, "");
-        _setApprovalForAll(_lodgeOwner(_lodgeId), _msgSender(), false);
+        _safeTransferFrom(lodgeHost(_lodgeId), _msgSender(), _tokenId, _days, "");
         _placeFunds(_tokenId, _days);
         _addToOrder(_orderId, _checkInTimestamp, _checkOutTimestamp, _days);
     }
 
     function registerLodge(bytes32 _lodgeId) external checkLodgeStatus(_lodgeId) {
-        s_lodgeOwner[_lodgeId] = _msgSender();
+        s_lodgeHost[_lodgeId] = _msgSender();
+        emit NewLodgeRegistered();
     }
 
     function registerToken(bytes32 _lodgeId, string memory _tokenURI, uint256 _tokenId, uint256 _tokenPrice)
         external
-        checkAuthorization(_lodgeId, _msgSender())
+        checkAuthorization(_lodgeId, _msgSender(), address(0))
         checkTokenExistence(_lodgeId, _tokenId)
         nonReentrant
     {
@@ -115,7 +119,7 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
     function mint(bytes32 _lodgeId, uint256 _tokenId, uint256 _value, bytes memory _data)
         external
         payable
-        checkAuthorization(_lodgeId, _msgSender())
+        checkAuthorization(_lodgeId, _msgSender(), address(0))
         checkTokenOwnership(_lodgeId, _tokenId)
         validateStaking(_tokenId, _value, msg.value)
         nonReentrant
@@ -124,20 +128,27 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         _placeFunds(_tokenId, _value);
     }
 
-    function checkIn() external {}
+    function checkIn(bytes32 _orderId)
+        external
+        checkAuthorization(_orderId, address(0), _msgSender())
+        verifyStayPeriod(_orderId)
+    {
+        s_customerAlreadyCheckIn[_orderId] = true;
+    }
 
     function checkOut(bytes32 _lodgeId, bytes32 _orderId, uint256 _tokenId)
         external
-        checkAuthorization(_lodgeId, _msgSender())
+        checkAuthorization(_lodgeId, _msgSender(), address(0))
         checkTokenOwnership(_lodgeId, _tokenId)
-        verifyRoomCheckOut(_orderId)
+        verifyStayPeriod(_orderId)
         nonReentrant
     {
         uint256 burnAmount = s_customerStayDurationInDays[_orderId];
         uint256 transferAmount = s_tokenPricePerNight[_tokenId] * burnAmount;
         address customer = s_customerOrder[_orderId];
+        require(s_customerAlreadyCheckIn[_orderId], MissingCheckIn());
         _burn(customer, _tokenId, burnAmount);
-        _transferFunds(_lodgeOwner(_lodgeId), transferAmount);
+        _transferFunds(lodgeHost(_lodgeId), transferAmount, 2);
     }
 
     function uri(uint256 _tokenId) public view override returns (string memory) {
@@ -146,6 +157,24 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
 
     function balanceOf(address _account, uint256 _tokenId) public view override returns (uint256) {
         return super.balanceOf(_account, _tokenId);
+    }
+
+    function orderDetail(bytes32 _orderId) external view returns (address, uint256, uint256, uint256, bool) {
+        return (
+            s_customerOrder[_orderId],
+            s_customerCheckInTimestamp[_orderId],
+            s_customerCheckOutTimestamp[_orderId],
+            s_customerStayDurationInDays[_orderId],
+            s_customerAlreadyCheckIn[_orderId]
+        );
+    }
+
+    function tokenDetail(uint256 _tokenId) external view returns (bytes32, uint256) {
+        return (s_lodgeToken[_tokenId], s_tokenPricePerNight[_tokenId]);
+    }
+
+    function lodgeHost(bytes32 _lodgeId) public view returns (address) {
+        return s_lodgeHost[_lodgeId];
     }
 
     function _addToOrder(bytes32 _orderId, uint256 _checkInTimestamp, uint256 _checkOutTimestamp, uint256 _days)
@@ -159,17 +188,14 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
 
     function _placeFunds(uint256 _tokenId, uint256 _amount) private {
         uint256 amount = s_tokenPricePerNight[_tokenId] * _amount;
-        _transferFunds(address(this), amount);
+        _transferFunds(address(this), amount, 1);
     }
 
-    function _transferFunds(address _recipient, uint256 _amount) private {
-        (bool success,) = payable(_recipient).call{value: _amount}("");
+    function _transferFunds(address _recipient, uint256 _amount, uint256 _time) private {
+        uint256 amountToTransfer = _amount * _time;
+        (bool success,) = payable(_recipient).call{value: amountToTransfer}("");
         require(success, TransferError());
         emit Transfer();
-    }
-
-    function _lodgeOwner(bytes32 _lodgeId) private view returns (address) {
-        return s_lodgeOwner[_lodgeId];
     }
 
     receive() external payable {}
