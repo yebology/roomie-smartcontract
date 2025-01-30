@@ -5,6 +5,7 @@ pragma solidity ^0.8.28;
 import {ERC1155URIStorage} from "@openzeppelin/contracts/token/ERC1155/extensions/ERC1155URIStorage.sol";
 import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {console} from "../lib/forge-std/src/console.sol";
 
 contract Roomie is ERC1155URIStorage, ReentrancyGuard {
     //
@@ -25,11 +26,18 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
     error InvalidTokenOwnership();
     error TransferError();
     error InvalidTime();
-    error InvalidCommitmentFee();
+    error InvalidStakingAmount();
     error MissingCheckIn();
 
     event Transfer();
-    event NewLodgeRegistered();
+    event LodgeRegistered();
+    event TokenRegistered();
+    event ReservationPlaced();
+
+    enum CheckTimestamp {
+        CHECK_IN,
+        CHECK_OUT
+    }
 
     modifier checkLodgeStatus(bytes32 _lodgeId) {
         if (lodgeHost(_lodgeId) != address(0)) {
@@ -49,7 +57,7 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
     }
 
     modifier checkTokenExistence(bytes32 _lodgeId, uint256 _tokenId) {
-        if (bytes32(s_lodgeToken[_tokenId]).length != 0) {
+        if (s_lodgeToken[_tokenId] != bytes32("")) {
             revert TokenAlreadyExistence();
         }
         _;
@@ -62,47 +70,42 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         _;
     }
 
-    modifier verifyStayPeriod(bytes32 _orderId) {
-        uint256 checkInTimestamp = s_customerCheckInTimestamp[_orderId];
-        uint256 checkOutTimestamp = s_customerCheckOutTimestamp[_orderId];
+    modifier verifyStayPeriod(bytes32 _orderId, CheckTimestamp _check) {
+        if (_check == CheckTimestamp.CHECK_IN) {
+            uint256 checkInTimestamp = s_customerCheckInTimestamp[_orderId];
 
-        if ((block.timestamp < checkInTimestamp) || (block.timestamp < checkOutTimestamp)) {
-            revert InvalidTime();
+            if (block.timestamp < checkInTimestamp) {
+                revert InvalidTime();
+            }
+        } else {
+            uint256 checkOutTimestamp = s_customerCheckOutTimestamp[_orderId];
+
+            if (block.timestamp < checkOutTimestamp) {
+                revert InvalidTime();
+            }
         }
         _;
     }
 
     // CURRENT FORMULA : tokenPricePerNight * mintSupply
-    modifier validateStaking(uint256 _tokenId, uint256 _mintAmount, uint256 _value) {
+    modifier validateStaking(uint256 _tokenId, uint256 _amount, uint256 _value) {
         uint256 tokenPricePerNight = s_tokenPricePerNight[_tokenId];
-        uint256 expectedValue = tokenPricePerNight * _mintAmount;
+        uint256 expectedValue = tokenPricePerNight * _amount;
 
         if (expectedValue != _value) {
-            revert InvalidCommitmentFee();
+            revert InvalidStakingAmount();
         }
+
         _;
     }
 
-    constructor(string memory _ipfsURL) ERC1155("") {
+    constructor(string memory _ipfsURL) ERC1155("https://ipfs.io/ipfs/") {
         _setBaseURI(_ipfsURL);
-    }
-
-    function reserve(
-        bytes32 _lodgeId,
-        bytes32 _orderId,
-        uint256 _tokenId,
-        uint256 _days,
-        uint256 _checkInTimestamp,
-        uint256 _checkOutTimestamp
-    ) external payable nonReentrant {
-        _safeTransferFrom(lodgeHost(_lodgeId), _msgSender(), _tokenId, _days, "");
-        _placeFunds(_tokenId, _days);
-        _addToOrder(_orderId, _checkInTimestamp, _checkOutTimestamp, _days);
     }
 
     function registerLodge(bytes32 _lodgeId) external checkLodgeStatus(_lodgeId) {
         s_lodgeHost[_lodgeId] = _msgSender();
-        emit NewLodgeRegistered();
+        emit LodgeRegistered();
     }
 
     function registerToken(bytes32 _lodgeId, string memory _tokenURI, uint256 _tokenId, uint256 _tokenPrice)
@@ -114,6 +117,7 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         s_lodgeToken[_tokenId] = _lodgeId;
         s_tokenPricePerNight[_tokenId] = _tokenPrice;
         _setURI(_tokenId, _tokenURI);
+        emit TokenRegistered();
     }
 
     function mint(bytes32 _lodgeId, uint256 _tokenId, uint256 _value, bytes memory _data)
@@ -128,10 +132,24 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         _placeFunds(_tokenId, _value);
     }
 
+    function reserve(
+        bytes32 _lodgeId,
+        bytes32 _orderId,
+        uint256 _tokenId,
+        uint256 _days,
+        uint256 _checkInTimestamp,
+        uint256 _checkOutTimestamp
+    ) external payable validateStaking(_tokenId, _days, msg.value) nonReentrant {
+        _safeTransferFrom(lodgeHost(_lodgeId), _msgSender(), _tokenId, _days, "");
+        _placeFunds(_tokenId, _days);
+        _addToOrder(_orderId, _checkInTimestamp, _checkOutTimestamp, _days);
+        emit ReservationPlaced();
+    }
+
     function checkIn(bytes32 _orderId)
         external
         checkAuthorization(_orderId, address(0), _msgSender())
-        verifyStayPeriod(_orderId)
+        verifyStayPeriod(_orderId, CheckTimestamp.CHECK_IN)
     {
         s_customerAlreadyCheckIn[_orderId] = true;
     }
@@ -140,7 +158,7 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         external
         checkAuthorization(_lodgeId, _msgSender(), address(0))
         checkTokenOwnership(_lodgeId, _tokenId)
-        verifyStayPeriod(_orderId)
+        verifyStayPeriod(_orderId, CheckTimestamp.CHECK_OUT)
         nonReentrant
     {
         uint256 burnAmount = s_customerStayDurationInDays[_orderId];
