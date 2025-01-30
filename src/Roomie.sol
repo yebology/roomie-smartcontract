@@ -5,7 +5,6 @@ pragma solidity ^0.8.28;
 import {ERC1155URIStorage} from "@openzeppelin/contracts/token/ERC1155/extensions/ERC1155URIStorage.sol";
 import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {console} from "../lib/forge-std/src/console.sol";
 
 contract Roomie is ERC1155URIStorage, ReentrancyGuard {
     //
@@ -99,7 +98,7 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         _;
     }
 
-    constructor(string memory _ipfsURL) ERC1155("https://ipfs.io/ipfs/") {
+    constructor(string memory _ipfsURL) ERC1155("") {
         _setBaseURI(_ipfsURL);
     }
 
@@ -139,7 +138,13 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         uint256 _days,
         uint256 _checkInTimestamp,
         uint256 _checkOutTimestamp
-    ) external payable validateStaking(_tokenId, _days, msg.value) nonReentrant {
+    )
+        external
+        payable
+        checkTokenOwnership(_lodgeId, _tokenId)
+        validateStaking(_tokenId, _days, msg.value)
+        nonReentrant
+    {
         _safeTransferFrom(lodgeHost(_lodgeId), _msgSender(), _tokenId, _days, "");
         _placeFunds(_tokenId, _days);
         _addToOrder(_orderId, _checkInTimestamp, _checkOutTimestamp, _days);
