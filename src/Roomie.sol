@@ -3,17 +3,23 @@
 pragma solidity ^0.8.28;
 
 import {ERC1155URIStorage} from "@openzeppelin/contracts/token/ERC1155/extensions/ERC1155URIStorage.sol";
+import {ERC1155Holder} from "@openzeppelin/contracts/token/ERC1155/utils/ERC1155Holder.sol";
 import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-contract Roomie is ERC1155URIStorage, ReentrancyGuard {
+contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     //
     mapping(bytes32 lodgeId => address host) private s_lodgeHost;
+    mapping(bytes32 lodgeId => uint256[] tokenId) private s_token;
 
     mapping(uint256 tokenId => bytes32 lodgeId) private s_lodgeToken;
     mapping(uint256 tokenId => uint256 price) private s_tokenPricePerNight;
 
+    mapping(uint256 tokenId => uint256 supply) private s_tokenSupply;
+    mapping(uint256 tokenId => uint256 burn) private s_tokenBurn;
+
     mapping(bytes32 orderId => address user) private s_customerOrder;
+    mapping(bytes32 orderId => bytes32 lodgeId) private s_lodgeOrder;
     mapping(bytes32 orderId => uint256 checkIn) private s_customerCheckInTimestamp;
     mapping(bytes32 orderId => uint256 checkOut) private s_customerCheckOutTimestamp;
     mapping(bytes32 orderId => uint256 duration) private s_customerStayDurationInDays;
@@ -115,6 +121,7 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
     {
         s_lodgeToken[_tokenId] = _lodgeId;
         s_tokenPricePerNight[_tokenId] = _tokenPrice;
+        s_token[_lodgeId].push(_tokenId);
         _setURI(_tokenId, _tokenURI);
         emit TokenRegistered();
     }
@@ -127,7 +134,8 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         validateStaking(_tokenId, _value, msg.value)
         nonReentrant
     {
-        _mint(_msgSender(), _tokenId, _value, _data);
+        _mint(address(this), _tokenId, _value, _data);
+        _incrementTokenSupply(_tokenId, _value);
         _placeFunds(_tokenId, _value);
     }
 
@@ -145,9 +153,9 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         validateStaking(_tokenId, _days, msg.value)
         nonReentrant
     {
-        _safeTransferFrom(lodgeHost(_lodgeId), _msgSender(), _tokenId, _days, "");
+        _safeTransferFrom(address(this), _msgSender(), _tokenId, _days, "");
         _placeFunds(_tokenId, _days);
-        _addToOrder(_orderId, _checkInTimestamp, _checkOutTimestamp, _days);
+        _addToOrder(_orderId, _lodgeId, _checkInTimestamp, _checkOutTimestamp, _days);
         emit ReservationPlaced();
     }
 
@@ -171,7 +179,14 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         address customer = s_customerOrder[_orderId];
         require(s_customerAlreadyCheckIn[_orderId], MissingCheckIn());
         _burn(customer, _tokenId, burnAmount);
+        _decrementTokenSupply(_tokenId, burnAmount);
         _transferFunds(lodgeHost(_lodgeId), transferAmount, 2);
+    }
+
+    // function openCase(bytes32 _orderId) external {}
+
+    function supportsInterface(bytes4 _interfaceId) public view override(ERC1155, ERC1155Holder) returns (bool) {
+        return super.supportsInterface(_interfaceId);
     }
 
     function uri(uint256 _tokenId) public view override returns (string memory) {
@@ -192,21 +207,35 @@ contract Roomie is ERC1155URIStorage, ReentrancyGuard {
         );
     }
 
-    function tokenDetail(uint256 _tokenId) external view returns (bytes32, uint256) {
-        return (s_lodgeToken[_tokenId], s_tokenPricePerNight[_tokenId]);
+    function tokenDetail(uint256 _tokenId) external view returns (bytes32, uint256, uint256, uint256) {
+        return (s_lodgeToken[_tokenId], s_tokenPricePerNight[_tokenId], s_tokenSupply[_tokenId], s_tokenBurn[_tokenId]);
     }
 
     function lodgeHost(bytes32 _lodgeId) public view returns (address) {
         return s_lodgeHost[_lodgeId];
     }
 
-    function _addToOrder(bytes32 _orderId, uint256 _checkInTimestamp, uint256 _checkOutTimestamp, uint256 _days)
-        private
-    {
+    function _addToOrder(
+        bytes32 _orderId,
+        bytes32 _lodgeId,
+        uint256 _checkInTimestamp,
+        uint256 _checkOutTimestamp,
+        uint256 _days
+    ) private {
         s_customerOrder[_orderId] = _msgSender();
+        s_lodgeOrder[_orderId] = _lodgeId;
         s_customerCheckInTimestamp[_orderId] = _checkInTimestamp;
         s_customerCheckOutTimestamp[_orderId] = _checkOutTimestamp;
         s_customerStayDurationInDays[_orderId] = _days;
+    }
+
+    function _incrementTokenSupply(uint256 _tokenId, uint256 _value) private {
+        s_tokenSupply[_tokenId] += _value;
+    }
+
+    function _decrementTokenSupply(uint256 _tokenId, uint256 _value) private {
+        s_tokenSupply[_tokenId] -= _value;
+        s_tokenBurn[_tokenId] += _value;
     }
 
     function _placeFunds(uint256 _tokenId, uint256 _amount) private {

@@ -59,7 +59,7 @@ contract RoomieTest is Test {
         roomie.registerToken(LODGE_ID, TOKEN_URI, TOKEN_ID, TOKEN_PRICE);
         vm.stopPrank();
 
-        (bytes32 actualLodgeToken, uint256 actualTokenPrice) = roomie.tokenDetail(TOKEN_ID);
+        (bytes32 actualLodgeToken, uint256 actualTokenPrice,,) = roomie.tokenDetail(TOKEN_ID);
 
         assert(LODGE_ID == actualLodgeToken);
         assertEq(TOKEN_PRICE, actualTokenPrice);
@@ -89,9 +89,13 @@ contract RoomieTest is Test {
         hoax(BOB, BOB_STAKING_AMOUNT);
         roomie.mint{value: BOB_STAKING_AMOUNT}(LODGE_ID, TOKEN_ID, TOKEN_TO_MINTED, bytes(""));
 
-        uint256 expectedBobBalance = roomie.balanceOf(BOB, TOKEN_ID);
+        uint256 actualTokenBalance = roomie.balanceOf(address(roomie), TOKEN_ID);
+        (,, uint256 actualSupply,) = roomie.tokenDetail(TOKEN_ID);
+        uint256 actualEthBalance = address(roomie).balance;
 
-        assertEq(TOKEN_TO_MINTED, expectedBobBalance);
+        assertEq(TOKEN_TO_MINTED, actualTokenBalance);
+        assertEq(BOB_STAKING_AMOUNT, actualEthBalance);
+        assertEq(TOKEN_TO_MINTED, actualSupply);
     }
 
     function testRevertIfInvalidTokenOwnership() public {
@@ -167,12 +171,15 @@ contract RoomieTest is Test {
         roomie.checkOut(LODGE_ID, ORDER_ID, TOKEN_ID);
         vm.stopPrank();
 
+        (,,, uint256 actualBurnSupply) = roomie.tokenDetail(TOKEN_ID);
+
         uint256 expectedBobBalance = TOKEN_PRICE * 2;
         uint256 actualBobBalance = address(BOB).balance;
 
         uint256 expectedSmartContractBalanceAfter = (TOKEN_PRICE * TOKEN_TO_MINTED) + 1 ether - expectedBobBalance;
         uint256 actualSmartContractBalanceAfter = address(roomie).balance;
 
+        assertEq(STAY_DAYS_B, actualBurnSupply);
         assertEq(expectedSmartContractBalanceBefore, actualSmartContractBalanceBefore);
         assertEq(expectedSmartContractBalanceAfter, actualSmartContractBalanceAfter);
         assertEq(expectedBobBalance, actualBobBalance);
