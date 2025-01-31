@@ -25,6 +25,13 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     mapping(bytes32 orderId => uint256 duration) private s_customerStayDurationInDays;
     mapping(bytes32 orderId => bool checkIn) private s_customerAlreadyCheckIn;
 
+    // optional
+    mapping(bytes32 caseId => bytes32 orderId) private s_problematicOrder;
+    mapping(bytes32 caseId => uint256 hostVote) private s_hostVote;
+    mapping(bytes32 caseId => uint256 customerVote) private s_customerVote;
+    mapping(bytes32 caseId => uint256 timestamp) private s_caseCreated;
+    mapping(bytes32 caseId => mapping(address voter => bool alreadyVote)) private s_voterStatus;
+
     error LodgeAlreadyRegistered();
     error TokenAlreadyExistence();
     error InvalidAuthorization();
@@ -33,6 +40,11 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     error InvalidTime();
     error InvalidStakingAmount();
     error MissingCheckIn();
+
+    // optional
+    error InvalidVoteInput();
+    error CaseNotAvailable();
+    error VoterAlreadyVote();
 
     event Transfer();
     event LodgeRegistered();
@@ -183,7 +195,33 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
         _transferFunds(lodgeHost(_lodgeId), transferAmount, 2);
     }
 
-    // function openCase(bytes32 _orderId) external {}
+    // optional
+    function openCase(bytes32 _caseId, bytes32 _orderId, bytes32 _lodgeId) external {
+        require(block.timestamp < s_customerCheckOutTimestamp[_orderId], InvalidTime());
+        require(
+            _msgSender() == s_customerOrder[_orderId] || s_lodgeOrder[_orderId] == _lodgeId
+                || _msgSender() == lodgeHost(_lodgeId),
+            InvalidAuthorization()
+        );
+        s_problematicOrder[_caseId] = _orderId;
+        s_caseCreated[_caseId] = block.timestamp;
+    }
+
+    // optional
+    function voteOnCase(bytes32 _caseId, uint256 _side) external {
+        require(
+            block.timestamp < s_caseCreated[_caseId] + 7 days || s_problematicOrder[_caseId] != bytes32(""),
+            CaseNotAvailable()
+        );
+        require(_side == 0 || _side == 1, InvalidVoteInput());
+        require(!s_voterStatus[_caseId][_msgSender()], VoterAlreadyVote());
+        if (_side == 0) {
+            s_hostVote[_caseId] += 1;
+        } else {
+            s_customerVote[_caseId] += 1;
+        }
+        s_voterStatus[_caseId][_msgSender()] = true;
+    }
 
     function supportsInterface(bytes4 _interfaceId) public view override(ERC1155, ERC1155Holder) returns (bool) {
         return super.supportsInterface(_interfaceId);
@@ -205,6 +243,11 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
             s_customerStayDurationInDays[_orderId],
             s_customerAlreadyCheckIn[_orderId]
         );
+    }
+
+    // optional
+    function caseDetail(bytes32 _caseId) external view returns (bytes32, uint256, uint256, uint256) {
+        return (s_problematicOrder[_caseId], s_hostVote[_caseId], s_customerVote[_caseId], s_caseCreated[_caseId]);
     }
 
     function tokenDetail(uint256 _tokenId) external view returns (bytes32, uint256, uint256, uint256) {
