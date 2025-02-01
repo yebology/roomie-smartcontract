@@ -29,7 +29,7 @@ contract RoomieTest is Test {
     uint256 private constant STAY_DAYS_B = 1;
 
     uint256 private constant BOB_STAKING_AMOUNT = TOKEN_TO_MINTED * TOKEN_PRICE;
-    uint256 private constant ALICE_STAKING_AMOUNT = STAY_DAYS_B * TOKEN_PRICE;
+    uint256 private constant ALICE_STAKING_AMOUNT = STAY_DAYS_A * TOKEN_PRICE;
 
     function setUp() public {
         RoomieScript roomieScript = new RoomieScript();
@@ -121,11 +121,11 @@ contract RoomieTest is Test {
         testSuccesfullyMintToken();
 
         uint256 checkInTimestamp = block.timestamp;
-        uint256 checkOutTimestamp = block.timestamp;
+        uint256 checkOutTimestamp = block.timestamp + 2 days;
 
         hoax(ALICE, ALICE_STAKING_AMOUNT);
         roomie.reserve{value: ALICE_STAKING_AMOUNT}(
-            LODGE_ID, ORDER_ID, TOKEN_ID, STAY_DAYS_B, checkInTimestamp, checkOutTimestamp
+            LODGE_ID, ORDER_ID, TOKEN_ID, STAY_DAYS_A, checkInTimestamp, checkOutTimestamp
         );
 
         (
@@ -139,7 +139,7 @@ contract RoomieTest is Test {
         assert(ALICE == actualCustomer);
         assertEq(checkInTimestamp, actualCheckInTimestamp);
         assertEq(checkOutTimestamp, actualCheckOutTimestamp);
-        assertEq(STAY_DAYS_B, actualStayDuration);
+        assertEq(STAY_DAYS_A, actualStayDuration);
         assert(false == actualCustomerAlreadyCheckIn);
     }
 
@@ -167,22 +167,23 @@ contract RoomieTest is Test {
     function testSuccessfullyCheckOut() public {
         testSuccessfullyCheckIn();
 
-        uint256 expectedSmartContractBalanceBefore = (TOKEN_PRICE * TOKEN_TO_MINTED) + TOKEN_PRICE;
+        uint256 expectedSmartContractBalanceBefore = (TOKEN_PRICE * TOKEN_TO_MINTED) + (TOKEN_PRICE * 2);
         uint256 actualSmartContractBalanceBefore = address(roomie).balance;
 
         vm.startPrank(BOB);
+        vm.warp(block.timestamp + 2 days);
         roomie.checkOut(LODGE_ID, ORDER_ID, TOKEN_ID);
         vm.stopPrank();
 
         (,,, uint256 actualBurnSupply) = roomie.tokenDetail(TOKEN_ID);
 
-        uint256 expectedBobBalance = TOKEN_PRICE * 2;
+        uint256 expectedBobBalance = TOKEN_PRICE * 4;
         uint256 actualBobBalance = address(BOB).balance;
 
-        uint256 expectedSmartContractBalanceAfter = (TOKEN_PRICE * TOKEN_TO_MINTED) + 1 ether - expectedBobBalance;
+        uint256 expectedSmartContractBalanceAfter = (TOKEN_PRICE * TOKEN_TO_MINTED) + 2 ether - expectedBobBalance;
         uint256 actualSmartContractBalanceAfter = address(roomie).balance;
 
-        assertEq(STAY_DAYS_B, actualBurnSupply);
+        assertEq(STAY_DAYS_A, actualBurnSupply);
         assertEq(expectedSmartContractBalanceBefore, actualSmartContractBalanceBefore);
         assertEq(expectedSmartContractBalanceAfter, actualSmartContractBalanceAfter);
         assertEq(expectedBobBalance, actualBobBalance);
@@ -218,23 +219,25 @@ contract RoomieTest is Test {
         testSuccessfullyVoteOnCase();
 
         vm.startPrank(BOB);
+        vm.warp(block.timestamp + 7 days);
         roomie.withdrawForCaseWinner(CASE_ID, ORDER_ID, TOKEN_ID);
         vm.stopPrank();
 
-        uint256 expectedBobBalance = TOKEN_PRICE * 2;
+        uint256 expectedBobBalance = TOKEN_PRICE * 4;
         uint256 actualBobBalance = address(BOB).balance;
 
         assertEq(expectedBobBalance, actualBobBalance);
     }
 
-    // function testRevertIfInvalidTimeWhileCheckOut() public {
-    //     testSuccessfullyCheckIn();
+    function testRevertIfInvalidTimeWhileCheckOut() public {
+        testSuccessfullyCheckIn();
 
-    //     vm.startPrank(BOB);
-    //     vm.expectRevert(Roomie.InvalidTime.selector);
-    //     roomie.checkOut(LODGE_ID, ORDER_ID, TOKEN_ID);
-    //     vm.stopPrank();
-    // }
+        vm.startPrank(BOB);
+        vm.warp(block.timestamp + 1 days);
+        vm.expectRevert(Roomie.InvalidTime.selector);
+        roomie.checkOut(LODGE_ID, ORDER_ID, TOKEN_ID);
+        vm.stopPrank();
+    }
 
     function testSuccessfullyGetURI() public {
         testSuccessfullyRegisterToken();
