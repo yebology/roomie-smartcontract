@@ -116,8 +116,8 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
         _;
     }
 
-    constructor(string memory _ipfsURL) ERC1155("") {
-        _setBaseURI(_ipfsURL);
+    constructor() ERC1155("") {
+        _setBaseURI("https://gateway.pinata.cloud/ipfs/");
     }
 
     function registerLodge(bytes32 _lodgeId) external checkLodgeStatus(_lodgeId) {
@@ -180,7 +180,7 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     }
 
     function checkOut(bytes32 _lodgeId, bytes32 _orderId, uint256 _tokenId)
-        external
+        public
         checkAuthorization(_lodgeId, _msgSender(), address(0))
         checkTokenOwnership(_lodgeId, _tokenId)
         verifyStayPeriod(_orderId, CheckTimestamp.CHECK_OUT)
@@ -203,6 +203,7 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
                 || _msgSender() == lodgeHost(_lodgeId),
             InvalidAuthorization()
         );
+
         s_problematicOrder[_caseId] = _orderId;
         s_caseCreated[_caseId] = block.timestamp;
     }
@@ -215,12 +216,33 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
         );
         require(_side == 0 || _side == 1, InvalidVoteInput());
         require(!s_voterStatus[_caseId][_msgSender()], VoterAlreadyVote());
+
         if (_side == 0) {
             s_hostVote[_caseId] += 1;
         } else {
             s_customerVote[_caseId] += 1;
         }
+
         s_voterStatus[_caseId][_msgSender()] = true;
+    }
+
+    // optional
+    function withdrawForCaseWinner(bytes32 _caseId, bytes32 _orderId, uint256 _tokenId) external {
+        require(block.timestamp >= s_caseCreated[_caseId] + 7 days, InvalidTime());
+
+        bytes32 lodgeId = s_lodgeOrder[_orderId];
+        address host = s_lodgeHost[lodgeId];
+        bool customerIsWin = s_customerVote[_caseId] > s_hostVote[_caseId];
+
+        if (_msgSender() == s_customerOrder[_orderId] && customerIsWin) {
+            uint256 amount = s_tokenPricePerNight[_tokenId];
+            uint256 time = s_customerStayDurationInDays[_orderId];
+            _transferFunds(_msgSender(), amount, time);
+        } else if (_msgSender() == host && !customerIsWin) {
+            checkOut(lodgeId, _orderId, _tokenId);
+        } else {
+            revert InvalidAuthorization();
+        }
     }
 
     function supportsInterface(bytes4 _interfaceId) public view override(ERC1155, ERC1155Holder) returns (bool) {

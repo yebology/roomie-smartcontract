@@ -13,9 +13,12 @@ contract RoomieTest is Test {
 
     address private constant BOB = address(1);
     address private constant ALICE = address(2);
+    address private constant CHARLIE = address(3);
 
     bytes32 private constant LODGE_ID = bytes32(abi.encodePacked("81291238c"));
     bytes32 private constant ORDER_ID = bytes32(abi.encodePacked("78asasd67"));
+    bytes32 private constant CASE_ID = bytes32(abi.encodePacked("sadjasa99"));
+
     string private constant TOKEN_URI = "bksandua7ad";
     uint256 private constant TOKEN_ID = 100;
     uint256 private constant OTHER_TOKEN_ID = 101;
@@ -185,6 +188,45 @@ contract RoomieTest is Test {
         assertEq(expectedBobBalance, actualBobBalance);
     }
 
+    function testSuccessfullyOpenCase() public {
+        testSuccessfullyCheckIn();
+
+        vm.startPrank(ALICE);
+        roomie.openCase(CASE_ID, ORDER_ID, LODGE_ID);
+        vm.stopPrank();
+
+        (bytes32 problematicOrder,,, uint256 caseOrderCreated) = roomie.caseDetail(CASE_ID);
+
+        assert(problematicOrder == ORDER_ID);
+        assert(block.timestamp == caseOrderCreated);
+    }
+
+    function testSuccessfullyVoteOnCase() public {
+        testSuccessfullyOpenCase();
+
+        vm.startPrank(CHARLIE);
+        roomie.voteOnCase(CASE_ID, 0);
+        vm.stopPrank();
+
+        (, uint256 hostVote, uint256 customerVote,) = roomie.caseDetail(CASE_ID);
+
+        assert(hostVote == 1);
+        assert(customerVote == 0);
+    }
+
+    function testSuccessfullyWithdrawForCaseWinner() public {
+        testSuccessfullyVoteOnCase();
+
+        vm.startPrank(BOB);
+        roomie.withdrawForCaseWinner(CASE_ID, ORDER_ID, TOKEN_ID);
+        vm.stopPrank();
+
+        uint256 expectedBobBalance = TOKEN_PRICE * 2;
+        uint256 actualBobBalance = address(BOB).balance;
+
+        assertEq(expectedBobBalance, actualBobBalance);
+    }
+
     // function testRevertIfInvalidTimeWhileCheckOut() public {
     //     testSuccessfullyCheckIn();
 
@@ -198,7 +240,7 @@ contract RoomieTest is Test {
         testSuccessfullyRegisterToken();
 
         string memory actualURI = roomie.uri(TOKEN_ID);
-        string memory expectedURI = string(abi.encodePacked("https://ipfs.io/ipfs/", TOKEN_URI));
+        string memory expectedURI = string(abi.encodePacked("https://gateway.pinata.cloud/ipfs/", TOKEN_URI));
 
         assert(keccak256(abi.encodePacked(actualURI)) == keccak256(abi.encodePacked(expectedURI)));
     }
