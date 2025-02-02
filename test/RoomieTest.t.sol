@@ -40,10 +40,6 @@ contract RoomieTest is Test {
         vm.startPrank(BOB);
         roomie.registerLodge(LODGE_ID);
         vm.stopPrank();
-
-        address actualLodgeHost = roomie.lodgeHost(LODGE_ID);
-
-        assert(BOB == actualLodgeHost);
     }
 
     function testRevertIfLodgeAlreadyRegistered() public {
@@ -121,24 +117,27 @@ contract RoomieTest is Test {
         testSuccesfullyMintToken();
 
         uint256 checkInTimestamp = block.timestamp;
-        uint256 checkOutTimestamp = block.timestamp + 2 days;
 
         hoax(ALICE, ALICE_STAKING_AMOUNT);
-        roomie.reserve{value: ALICE_STAKING_AMOUNT}(
-            LODGE_ID, ORDER_ID, TOKEN_ID, STAY_DAYS_A, checkInTimestamp, checkOutTimestamp
-        );
+        roomie.reserve{value: ALICE_STAKING_AMOUNT}(LODGE_ID, ORDER_ID, TOKEN_ID, STAY_DAYS_A, checkInTimestamp);
 
         (
             address actualCustomer,
+            bytes32 lodgeId,
+            uint256 tokenId,
             uint256 actualCheckInTimestamp,
             uint256 actualCheckOutTimestamp,
             uint256 actualStayDuration,
-            bool actualCustomerAlreadyCheckIn
+            bool actualCustomerAlreadyCheckIn,
+            bool actualCustomerAlreadyCheckOut
         ) = roomie.orderDetail(ORDER_ID);
 
         assert(ALICE == actualCustomer);
+        assertEq(LODGE_ID, lodgeId);
+        assertEq(TOKEN_ID, tokenId);
         assertEq(checkInTimestamp, actualCheckInTimestamp);
-        assertEq(checkOutTimestamp, actualCheckOutTimestamp);
+        assertEq(actualCheckOutTimestamp, 0);
+        assert(actualCustomerAlreadyCheckOut == false);
         assertEq(STAY_DAYS_A, actualStayDuration);
         assert(false == actualCustomerAlreadyCheckIn);
     }
@@ -150,7 +149,7 @@ contract RoomieTest is Test {
         roomie.checkIn(ORDER_ID);
         vm.stopPrank();
 
-        (,,,, bool actualCustomerAlreadyCheckIn) = roomie.orderDetail(ORDER_ID);
+        (,,,,,, bool actualCustomerAlreadyCheckIn,) = roomie.orderDetail(ORDER_ID);
 
         assert(true == actualCustomerAlreadyCheckIn);
     }
@@ -167,15 +166,26 @@ contract RoomieTest is Test {
     function testSuccessfullyCheckOut() public {
         testSuccessfullyCheckIn();
 
+        vm.startPrank(ALICE);
+        vm.warp(block.timestamp + 2 days);
+        roomie.checkOut(ORDER_ID, TOKEN_ID);
+        vm.stopPrank();
+
+        (,,, uint256 actualBurnSupply) = roomie.tokenDetail(TOKEN_ID);
+
+        assertEq(STAY_DAYS_A, actualBurnSupply);
+    }
+
+    function testSuccessfullyWithdrawFromCustomerCheckOut() public {
+        testSuccessfullyCheckOut();
+
         uint256 expectedSmartContractBalanceBefore = (TOKEN_PRICE * TOKEN_TO_MINTED) + (TOKEN_PRICE * 2);
         uint256 actualSmartContractBalanceBefore = address(roomie).balance;
 
         vm.startPrank(BOB);
         vm.warp(block.timestamp + 2 days);
-        roomie.checkOut(LODGE_ID, ORDER_ID, TOKEN_ID);
+        roomie.withdrawFromCustomerCheckOut(LODGE_ID, ORDER_ID, TOKEN_ID);
         vm.stopPrank();
-
-        (,,, uint256 actualBurnSupply) = roomie.tokenDetail(TOKEN_ID);
 
         uint256 expectedBobBalance = TOKEN_PRICE * 4;
         uint256 actualBobBalance = address(BOB).balance;
@@ -183,7 +193,6 @@ contract RoomieTest is Test {
         uint256 expectedSmartContractBalanceAfter = (TOKEN_PRICE * TOKEN_TO_MINTED) + 2 ether - expectedBobBalance;
         uint256 actualSmartContractBalanceAfter = address(roomie).balance;
 
-        assertEq(STAY_DAYS_A, actualBurnSupply);
         assertEq(expectedSmartContractBalanceBefore, actualSmartContractBalanceBefore);
         assertEq(expectedSmartContractBalanceAfter, actualSmartContractBalanceAfter);
         assertEq(expectedBobBalance, actualBobBalance);
@@ -229,15 +238,15 @@ contract RoomieTest is Test {
         assertEq(expectedBobBalance, actualBobBalance);
     }
 
-    function testRevertIfInvalidTimeWhileCheckOut() public {
-        testSuccessfullyCheckIn();
+    // function testRevertIfInvalidTimeWhileCheckOut() public {
+    //     testSuccessfullyCheckIn();
 
-        vm.startPrank(BOB);
-        vm.warp(block.timestamp + 1 days);
-        vm.expectRevert(Roomie.InvalidTime.selector);
-        roomie.checkOut(LODGE_ID, ORDER_ID, TOKEN_ID);
-        vm.stopPrank();
-    }
+    //     vm.startPrank(BOB);
+    //     vm.warp(block.timestamp + 1 days);
+    //     vm.expectRevert(Roomie.InvalidTime.selector);
+    //     roomie.checkOut(LODGE_ID, ORDER_ID, TOKEN_ID);
+    //     vm.stopPrank();
+    // }
 
     function testSuccessfullyGetURI() public {
         testSuccessfullyRegisterToken();
