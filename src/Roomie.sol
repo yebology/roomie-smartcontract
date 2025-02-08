@@ -26,7 +26,6 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     mapping(bytes32 orderId => bool checkIn) private s_customerAlreadyCheckIn;
     mapping(bytes32 orderId => bool checkOut) private s_customerAlreadyCheckOut;
 
-    // optional
     mapping(bytes32 caseId => bytes32 orderId) private s_problematicOrder;
     mapping(bytes32 caseId => uint256 hostVote) private s_hostVote;
     mapping(bytes32 caseId => uint256 customerVote) private s_customerVote;
@@ -43,7 +42,6 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     error MissingCheckIn();
     error MissingCheckOut();
 
-    // optional
     error InvalidVoteInput();
     error CaseNotAvailable();
     error VoterAlreadyVote();
@@ -234,7 +232,6 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
         _transferHostFunds(_msgSender(), _orderId, _tokenId);
     }
 
-    // Public Functions
     function openCase(bytes32 _caseId, bytes32 _orderId, bytes32 _lodgeId)
         external
         verifyOrderStatus(_orderId, CheckTimestamp.CHECK_OUT, false)
@@ -288,7 +285,6 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
         );
     }
 
-    // optional
     function caseDetail(bytes32 _caseId) external view returns (bytes32, uint256, uint256, uint256) {
         return (s_problematicOrder[_caseId], s_hostVote[_caseId], s_customerVote[_caseId], s_caseCreated[_caseId]);
     }
