@@ -349,6 +349,7 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
         } else if (_msgSender() == host && !customerIsWin) {
             _transferHostFunds(_msgSender(), _orderId, _tokenId);
             _burn(customer, _tokenId, amount);
+            _decrementTokenSupply(_tokenId, amount);
         } else {
             revert InvalidAuthorization();
         }
