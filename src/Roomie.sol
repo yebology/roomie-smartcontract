@@ -357,8 +357,6 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     function _transferCustomerFunds(address customer, uint256 _tokenId, bytes32 _orderId) private {
         uint256 amount = s_tokenPricePerNight[_tokenId];
         uint256 time = s_customerStayDurationInDays[_orderId];
-        _burn(_msgSender(), _tokenId, time);
-        _decrementTokenSupply(_tokenId, time);
         _transferFunds(customer, amount, time);
     }
 
