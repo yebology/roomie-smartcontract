@@ -9,27 +9,40 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 
 contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     //
+    struct Order {
+        address customer;
+        uint256 tokenId;
+        bytes32 lodgeId;
+        uint256 checkIn;
+        uint256 checkOut;
+        uint256 duration;
+        bool alreadyCheckIn;
+        bool alreadyCheckOut;
+    }
+
+    struct Case {
+        bytes32 orderId;
+        uint256 hostVote;
+        uint256 customerVote;
+        uint256 createdTimestamp;
+    }
+
+    struct Token {
+        bytes32 lodgeId;
+        uint256 price;
+        uint256 supply;
+        uint256 burn;
+    }
+
+    enum CheckTimestamp {
+        CHECK_IN,
+        CHECK_OUT
+    }
+
     mapping(bytes32 lodgeId => address host) private s_lodgeHost;
-
-    mapping(uint256 tokenId => bytes32 lodgeId) private s_lodgeToken;
-    mapping(uint256 tokenId => uint256 price) private s_tokenPricePerNight;
-
-    mapping(uint256 tokenId => uint256 supply) private s_tokenSupply;
-    mapping(uint256 tokenId => uint256 burn) private s_tokenBurn;
-
-    mapping(bytes32 orderId => address user) private s_customerOrder;
-    mapping(bytes32 orderId => uint256 tokenId) private s_orderToken;
-    mapping(bytes32 orderId => bytes32 lodgeId) private s_lodgeOrder;
-    mapping(bytes32 orderId => uint256 checkIn) private s_customerCheckInTimestamp;
-    mapping(bytes32 orderId => uint256 checkOut) private s_customerCheckOutTimestamp;
-    mapping(bytes32 orderId => uint256 duration) private s_customerStayDurationInDays;
-    mapping(bytes32 orderId => bool checkIn) private s_customerAlreadyCheckIn;
-    mapping(bytes32 orderId => bool checkOut) private s_customerAlreadyCheckOut;
-
-    mapping(bytes32 caseId => bytes32 orderId) private s_problematicOrder;
-    mapping(bytes32 caseId => uint256 hostVote) private s_hostVote;
-    mapping(bytes32 caseId => uint256 customerVote) private s_customerVote;
-    mapping(bytes32 caseId => uint256 timestamp) private s_caseCreated;
+    mapping(uint256 tokenId => Token) private s_token;
+    mapping(bytes32 orderId => Order) private s_order;
+    mapping(bytes32 caseId => Case) private s_case;
     mapping(bytes32 caseId => mapping(address voter => bool alreadyVote)) private s_voterStatus;
 
     error LodgeAlreadyRegistered();
@@ -41,7 +54,6 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     error InvalidStakingAmount();
     error MissingCheckIn();
     error MissingCheckOut();
-
     error InvalidVoteInput();
     error CaseNotAvailable();
     error VoterAlreadyVote();
@@ -50,11 +62,6 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     event LodgeRegistered();
     event TokenRegistered();
     event ReservationPlaced();
-
-    enum CheckTimestamp {
-        CHECK_IN,
-        CHECK_OUT
-    }
 
     modifier checkLodgeStatus(bytes32 _lodgeId) {
         if (s_lodgeHost[_lodgeId] != address(0)) {
@@ -66,7 +73,7 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     modifier checkAuthorization(bytes32 _id, address _host, address _customer) {
         if (
             (_customer == address(0) && s_lodgeHost[_id] != _host)
-                || (_host == address(0) && s_customerOrder[_id] != _customer)
+                || (_host == address(0) && s_order[_id].customer != _customer)
         ) {
             revert InvalidAuthorization();
         }
@@ -74,21 +81,21 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     }
 
     modifier checkTokenExistence(bytes32 _lodgeId, uint256 _tokenId) {
-        if (s_lodgeToken[_tokenId] != bytes32("")) {
+        if (s_token[_tokenId].lodgeId != bytes32("")) {
             revert TokenAlreadyExistence();
         }
         _;
     }
 
     modifier checkTokenOwnership(bytes32 _lodgeId, uint256 _tokenId) {
-        if (keccak256(abi.encodePacked(s_lodgeToken[_tokenId])) != keccak256(abi.encodePacked(_lodgeId))) {
+        if (keccak256(abi.encodePacked(s_token[_tokenId].lodgeId)) != keccak256(abi.encodePacked(_lodgeId))) {
             revert InvalidTokenOwnership();
         }
         _;
     }
 
     modifier verifyCheckInTime(bytes32 _orderId) {
-        uint256 checkInTimestamp = s_customerCheckInTimestamp[_orderId];
+        uint256 checkInTimestamp = s_order[_orderId].checkIn;
         if (block.timestamp < checkInTimestamp) {
             revert InvalidTime();
         }
@@ -96,16 +103,16 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     }
 
     modifier verifyOrderStatus(bytes32 _orderId, CheckTimestamp check, bool expectedStatus) {
-        if (check == CheckTimestamp.CHECK_IN && s_customerAlreadyCheckIn[_orderId] != expectedStatus) {
+        if (check == CheckTimestamp.CHECK_IN && s_order[_orderId].alreadyCheckIn != expectedStatus) {
             revert MissingCheckIn();
-        } else if (check == CheckTimestamp.CHECK_OUT && s_customerAlreadyCheckOut[_orderId] != expectedStatus) {
+        } else if (check == CheckTimestamp.CHECK_OUT && s_order[_orderId].alreadyCheckOut != expectedStatus) {
             revert MissingCheckOut();
         }
         _;
     }
 
     modifier checkOrderToken(bytes32 _orderId, uint256 _tokenId) {
-        if (s_orderToken[_orderId] != _tokenId) {
+        if (s_order[_orderId].tokenId != _tokenId) {
             revert InvalidAuthorization();
         }
         _;
@@ -113,7 +120,7 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
 
     modifier onlyAuthorized(bytes32 _orderId, bytes32 _lodgeId) {
         require(
-            _msgSender() == s_customerOrder[_orderId] || s_lodgeOrder[_orderId] == _lodgeId
+            _msgSender() == s_order[_orderId].customer || s_order[_orderId].lodgeId == _lodgeId
                 || _msgSender() == s_lodgeHost[_lodgeId],
             InvalidAuthorization()
         );
@@ -122,7 +129,7 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
 
     modifier caseAvailable(bytes32 _caseId) {
         require(
-            block.timestamp < s_caseCreated[_caseId] + 7 days || s_problematicOrder[_caseId] != bytes32(""),
+            block.timestamp < s_case[_caseId].createdTimestamp + 7 days || s_case[_caseId].orderId != bytes32(""),
             CaseNotAvailable()
         );
         _;
@@ -139,13 +146,13 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     }
 
     modifier withdrawAllowed(bytes32 _caseId) {
-        require(block.timestamp >= s_caseCreated[_caseId] + 7 days, InvalidTime());
+        require(block.timestamp >= s_case[_caseId].createdTimestamp + 7 days, InvalidTime());
         _;
     }
 
     // CURRENT FORMULA : tokenPricePerNight * mintSupply
     modifier validateStaking(uint256 _tokenId, uint256 _amount, uint256 _value) {
-        uint256 tokenPricePerNight = s_tokenPricePerNight[_tokenId];
+        uint256 tokenPricePerNight = s_token[_tokenId].price;
         uint256 expectedValue = tokenPricePerNight * _amount;
 
         if (expectedValue != _value) {
@@ -206,7 +213,7 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
         checkAuthorization(_orderId, address(0), _msgSender())
         verifyCheckInTime(_orderId)
     {
-        s_customerAlreadyCheckIn[_orderId] = true;
+        s_order[_orderId].alreadyCheckIn = true;
     }
 
     function checkOut(bytes32 _orderId, uint256 _tokenId)
@@ -215,11 +222,11 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
         verifyOrderStatus(_orderId, CheckTimestamp.CHECK_IN, true)
         checkOrderToken(_orderId, _tokenId)
     {
-        uint256 burnAmount = s_customerStayDurationInDays[_orderId];
+        uint256 burnAmount = s_order[_orderId].duration;
         _burn(_msgSender(), _tokenId, burnAmount);
         _decrementTokenSupply(_tokenId, burnAmount);
-        s_customerCheckOutTimestamp[_orderId] = block.timestamp;
-        s_customerAlreadyCheckOut[_orderId] = true;
+        s_order[_orderId].checkOut = block.timestamp;
+        s_order[_orderId].alreadyCheckOut = true;
     }
 
     function withdrawFromCustomerCheckOut(bytes32 _lodgeId, bytes32 _orderId, uint256 _tokenId)
@@ -268,83 +275,64 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
         return super.balanceOf(_account, _tokenId);
     }
 
-    function orderDetail(bytes32 _orderId)
-        external
-        view
-        returns (address, bytes32, uint256, uint256, uint256, uint256, bool, bool)
-    {
-        return (
-            s_customerOrder[_orderId],
-            s_lodgeOrder[_orderId],
-            s_orderToken[_orderId],
-            s_customerCheckInTimestamp[_orderId],
-            s_customerCheckOutTimestamp[_orderId],
-            s_customerStayDurationInDays[_orderId],
-            s_customerAlreadyCheckIn[_orderId],
-            s_customerAlreadyCheckOut[_orderId]
-        );
+    function orderDetail(bytes32 _orderId) external view returns (Order memory) {
+        return s_order[_orderId];
     }
 
-    function caseDetail(bytes32 _caseId) external view returns (bytes32, uint256, uint256, uint256) {
-        return (s_problematicOrder[_caseId], s_hostVote[_caseId], s_customerVote[_caseId], s_caseCreated[_caseId]);
+    function caseDetail(bytes32 _caseId) external view returns (Case memory) {
+        return s_case[_caseId];
     }
 
-    function tokenDetail(uint256 _tokenId) external view returns (bytes32, uint256, uint256, uint256) {
-        return (s_lodgeToken[_tokenId], s_tokenPricePerNight[_tokenId], s_tokenSupply[_tokenId], s_tokenBurn[_tokenId]);
+    function tokenDetail(uint256 _tokenId) external view returns (Token memory) {
+        return s_token[_tokenId];
     }
 
     function _addToOrder(bytes32 _orderId, bytes32 _lodgeId, uint256 _tokenId, uint256 _checkInTimestamp, uint256 _days)
         private
     {
-        s_customerOrder[_orderId] = _msgSender();
-        s_lodgeOrder[_orderId] = _lodgeId;
-        s_orderToken[_orderId] = _tokenId;
-        s_customerCheckInTimestamp[_orderId] = _checkInTimestamp;
-        s_customerStayDurationInDays[_orderId] = _days;
+        s_order[_orderId] = Order(_msgSender(), _tokenId, _lodgeId, _checkInTimestamp, 0, _days, false, false);
     }
 
     function _registerToken(bytes32 _lodgeId, uint256 _tokenId, uint256 _tokenPrice) private {
-        s_lodgeToken[_tokenId] = _lodgeId;
-        s_tokenPricePerNight[_tokenId] = _tokenPrice;
+        s_token[_tokenId] = Token(_lodgeId, _tokenPrice, 0, 0);
     }
 
     function _incrementTokenSupply(uint256 _tokenId, uint256 _value) private {
-        s_tokenSupply[_tokenId] += _value;
+        s_token[_tokenId].supply += _value;
     }
 
     function _decrementTokenSupply(uint256 _tokenId, uint256 _value) private {
-        s_tokenSupply[_tokenId] -= _value;
-        s_tokenBurn[_tokenId] += _value;
+        s_token[_tokenId].supply -= _value;
+        s_token[_tokenId].burn += _value;
     }
 
     function _placeFunds(uint256 _tokenId, uint256 _amount) private {
-        uint256 amount = s_tokenPricePerNight[_tokenId] * _amount;
+        uint256 amount = s_token[_tokenId].price * _amount;
         _transferFunds(address(this), amount, 1);
     }
 
     function _registerCase(bytes32 _caseId, bytes32 _orderId) private {
-        s_problematicOrder[_caseId] = _orderId;
-        s_caseCreated[_caseId] = block.timestamp;
+        s_case[_caseId] = Case(_orderId, 0, 0, block.timestamp);
     }
 
     function _recordVote(bytes32 _caseId, uint256 _side) private {
         if (_side == 0) {
-            s_hostVote[_caseId] += 1;
+            s_case[_caseId].hostVote += 1;
         } else {
-            s_customerVote[_caseId] += 1;
+            s_case[_caseId].customerVote += 1;
         }
 
         s_voterStatus[_caseId][_msgSender()] = true;
     }
 
     function _processWithdrawal(bytes32 _caseId, bytes32 _orderId, uint256 _tokenId) private {
-        bytes32 lodgeId = s_lodgeOrder[_orderId];
+        bytes32 lodgeId = s_order[_orderId].lodgeId;
         address host = s_lodgeHost[lodgeId];
-        address customer = s_customerOrder[_orderId];
-        uint256 amount = s_customerStayDurationInDays[_orderId];
-        bool customerIsWin = s_customerVote[_caseId] > s_hostVote[_caseId];
+        address customer = s_order[_orderId].customer;
+        uint256 amount = s_order[_orderId].duration;
+        bool customerIsWin = s_case[_caseId].customerVote > s_case[_caseId].hostVote;
 
-        if (_msgSender() == s_customerOrder[_orderId] && customerIsWin) {
+        if (_msgSender() == s_order[_orderId].customer && customerIsWin) {
             _transferCustomerFunds(_msgSender(), _tokenId, _orderId);
         } else if (_msgSender() == host && !customerIsWin) {
             _transferHostFunds(_msgSender(), _orderId, _tokenId);
@@ -356,14 +344,14 @@ contract Roomie is ERC1155URIStorage, ERC1155Holder, ReentrancyGuard {
     }
 
     function _transferCustomerFunds(address customer, uint256 _tokenId, bytes32 _orderId) private {
-        uint256 amount = s_tokenPricePerNight[_tokenId];
-        uint256 time = s_customerStayDurationInDays[_orderId];
+        uint256 amount = s_token[_tokenId].price;
+        uint256 time = s_order[_orderId].duration;
         _transferFunds(customer, amount, time);
     }
 
     function _transferHostFunds(address _host, bytes32 _orderId, uint256 _tokenId) private {
-        uint256 burnAmount = s_customerStayDurationInDays[_orderId];
-        uint256 transferAmount = s_tokenPricePerNight[_tokenId] * burnAmount;
+        uint256 burnAmount = s_order[_orderId].duration;
+        uint256 transferAmount = s_token[_tokenId].price * burnAmount;
         _transferFunds(_host, transferAmount, 2);
     }
 

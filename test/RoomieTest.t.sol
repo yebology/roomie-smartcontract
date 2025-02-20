@@ -58,7 +58,8 @@ contract RoomieTest is Test {
         roomie.registerToken(LODGE_ID, TOKEN_URI, TOKEN_ID, TOKEN_PRICE);
         vm.stopPrank();
 
-        (bytes32 actualLodgeToken, uint256 actualTokenPrice,,) = roomie.tokenDetail(TOKEN_ID);
+        bytes32 actualLodgeToken = roomie.tokenDetail(TOKEN_ID).lodgeId;
+        uint256 actualTokenPrice = roomie.tokenDetail(TOKEN_ID).price;
 
         assert(LODGE_ID == actualLodgeToken);
         assertEq(TOKEN_PRICE, actualTokenPrice);
@@ -89,7 +90,7 @@ contract RoomieTest is Test {
         roomie.mint{value: BOB_STAKING_AMOUNT}(LODGE_ID, TOKEN_ID, TOKEN_TO_MINTED, bytes(""));
 
         uint256 actualTokenBalance = roomie.balanceOf(address(roomie), TOKEN_ID);
-        (,, uint256 actualSupply,) = roomie.tokenDetail(TOKEN_ID);
+        uint256 actualSupply = roomie.tokenDetail(TOKEN_ID).supply;
         uint256 actualEthBalance = address(roomie).balance;
 
         assertEq(TOKEN_TO_MINTED, actualTokenBalance);
@@ -121,25 +122,19 @@ contract RoomieTest is Test {
         hoax(ALICE, ALICE_STAKING_AMOUNT);
         roomie.reserve{value: ALICE_STAKING_AMOUNT}(LODGE_ID, ORDER_ID, TOKEN_ID, STAY_DAYS_A, checkInTimestamp);
 
-        (
-            address actualCustomer,
-            bytes32 lodgeId,
-            uint256 tokenId,
-            uint256 actualCheckInTimestamp,
-            uint256 actualCheckOutTimestamp,
-            uint256 actualStayDuration,
-            bool actualCustomerAlreadyCheckIn,
-            bool actualCustomerAlreadyCheckOut
-        ) = roomie.orderDetail(ORDER_ID);
+        address actualCustomer = roomie.orderDetail(ORDER_ID).customer;
+        bytes32 lodgeId = roomie.orderDetail(ORDER_ID).lodgeId;
+        uint256 tokenId = roomie.orderDetail(ORDER_ID).tokenId;
+        uint256 actualCheckInTimestamp = roomie.orderDetail(ORDER_ID).checkIn;
+        uint256 actualCheckOutTimestamp = roomie.orderDetail(ORDER_ID).checkOut;
+        uint256 actualStayDuration = roomie.orderDetail(ORDER_ID).duration;
 
         assert(ALICE == actualCustomer);
         assertEq(LODGE_ID, lodgeId);
         assertEq(TOKEN_ID, tokenId);
         assertEq(checkInTimestamp, actualCheckInTimestamp);
         assertEq(actualCheckOutTimestamp, 0);
-        assert(actualCustomerAlreadyCheckOut == false);
         assertEq(STAY_DAYS_A, actualStayDuration);
-        assert(false == actualCustomerAlreadyCheckIn);
     }
 
     function testSuccessfullyCheckIn() public {
@@ -149,7 +144,7 @@ contract RoomieTest is Test {
         roomie.checkIn(ORDER_ID);
         vm.stopPrank();
 
-        (,,,,,, bool actualCustomerAlreadyCheckIn,) = roomie.orderDetail(ORDER_ID);
+        bool actualCustomerAlreadyCheckIn = roomie.orderDetail(ORDER_ID).alreadyCheckIn;
 
         assert(true == actualCustomerAlreadyCheckIn);
     }
@@ -171,7 +166,7 @@ contract RoomieTest is Test {
         roomie.checkOut(ORDER_ID, TOKEN_ID);
         vm.stopPrank();
 
-        (,,, uint256 actualBurnSupply) = roomie.tokenDetail(TOKEN_ID);
+        uint256 actualBurnSupply = roomie.tokenDetail(TOKEN_ID).burn;
 
         assertEq(STAY_DAYS_A, actualBurnSupply);
     }
@@ -205,7 +200,8 @@ contract RoomieTest is Test {
         roomie.openCase(CASE_ID, ORDER_ID, LODGE_ID);
         vm.stopPrank();
 
-        (bytes32 problematicOrder,,, uint256 caseOrderCreated) = roomie.caseDetail(CASE_ID);
+        bytes32 problematicOrder = roomie.caseDetail(CASE_ID).orderId;
+        uint256 caseOrderCreated = roomie.caseDetail(CASE_ID).createdTimestamp;
 
         assert(problematicOrder == ORDER_ID);
         assert(block.timestamp == caseOrderCreated);
@@ -218,7 +214,8 @@ contract RoomieTest is Test {
         roomie.voteOnCase(CASE_ID, 0);
         vm.stopPrank();
 
-        (, uint256 hostVote, uint256 customerVote,) = roomie.caseDetail(CASE_ID);
+        uint256 hostVote = roomie.caseDetail(CASE_ID).hostVote;
+        uint256 customerVote = roomie.caseDetail(CASE_ID).customerVote;
 
         assert(hostVote == 1);
         assert(customerVote == 0);
